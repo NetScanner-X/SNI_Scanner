@@ -1,0 +1,19 @@
+# Default SNI List
+# Add one domain per line
+
+cloudflare.com
+www.cloudflare.com
+cdn.cloudflare.com
+workers.dev
+pages.dev
+discord.com
+www.discord.com
+telegram.org
+web.telegram.org
+google.com
+www.google.com
+googleapis.com
+github.com
+raw.githubusercontent.com
+fastly.com
+cdn.fastly.com

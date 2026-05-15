@@ -1,0 +1,3 @@
+# Custom SNI List
+# Add your own domains here
+

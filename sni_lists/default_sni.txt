@@ -1,0 +1,13 @@
+# Default SNI list - add your domains below
+cloudflare.com
+cdn.cloudflare.com
+workers.dev
+pages.dev
+www.cloudflare.com
+dash.cloudflare.com
+react.dev
+nextjs.org
+vercel.com
+app.vercel.com
+github.com
+raw.githubusercontent.com
