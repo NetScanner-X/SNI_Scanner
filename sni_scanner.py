@@ -604,11 +604,24 @@ class ProxyPathVerifier:
 class SNIScanner:
     def __init__(self, parsed_config, timeout=DEFAULT_TIMEOUT,
                  max_workers=DEFAULT_MAX_WORKERS, retry=DEFAULT_RETRY_COUNT,
-                 verify_cert=False, use_iran_dns=False):
+                 verify_cert=False, use_iran_dns=False, use_cache=True,
+                 cache_ttl=900, stability_runs=1, **kwargs):
+        """Simple/A-only SNI scanner.
+
+        NOTE: newer UI/settings code passes global options such as use_cache,
+        cache_ttl and stability_runs to every scanner class.  Older versions of
+        this class did not accept those arguments, which caused:
+        TypeError: SNIScanner.__init__() got an unexpected keyword argument
+        'use_cache'.  Keep these parameters here so all scanner sections share
+        the same global settings without breaking the simple scanner.
+        """
         self.parsed_config = parsed_config
         self.timeout = timeout; self.max_workers = max_workers
+        self.retry = max(1, int(retry or 1))
         self._resolver = DNSResolver(use_iran_dns=use_iran_dns, timeout=timeout)
-        self._prober   = TLSProber(timeout=timeout, retry=retry, verify_cert=verify_cert)
+        self._prober   = TLSProber(timeout=timeout, retry=self.retry, verify_cert=verify_cert)
+        self._cache    = ScanCache(enabled=use_cache, ttl_seconds=cache_ttl)
+        self._stability_runs = max(1, min(5, int(stability_runs or 1)))
 
     def scan(self, domains: List[str], port: int = 443, on_result=None) -> List[SNIResult]:
         if not domains: return []
@@ -633,6 +646,27 @@ class SNIScanner:
 
     def _scan_one(self, domain, port) -> SNIResult:
         cfg = self.parsed_config
+        cache_key = None
+        if hasattr(self, "_cache") and self._cache.enabled:
+            cache_key = self._cache.key(
+                "SNIScanner", domain, port,
+                getattr(cfg, "host", "") if cfg else "",
+                getattr(cfg, "sni", "") if cfg else "",
+                getattr(cfg, "security", "") if cfg else "",
+                getattr(cfg, "network", "") if cfg else "",
+                getattr(cfg, "host_header", "") if cfg else "",
+                getattr(cfg, "path", "") if cfg else "",
+            )
+            cached = self._cache.get(cache_key)
+            if isinstance(cached, dict):
+                try:
+                    cached["extra"] = dict(cached.get("extra") or {})
+                    cached["extra"]["from_cache"] = True
+                    return SNIResult(**{k: v for k, v in cached.items() if k in SNIResult.__dataclass_fields__})
+                except Exception:
+                    pass
+
+        cfg = self.parsed_config
         is_cdn = False; config_ip: Optional[str] = None
         if cfg:
             cfg_host = (cfg.host or "").strip()
@@ -649,11 +683,16 @@ class SNIScanner:
             if not ip:
                 ip = config_ip or (cfg.host if cfg else None)
                 if not ip:
-                    return SNIResult(domain=domain, sni=domain, port=port,
-                                     error="DNS resolution failed")
+                    result = SNIResult(domain=domain, sni=domain, port=port,
+                                       error="DNS resolution failed")
+                    if cache_key:
+                        self._cache.set(cache_key, result.to_dict())
+                    return result
         result = self._prober.probe(domain=domain, ip=ip, port=port, sni=domain)
         result.extra["scan_mode"] = "cdn" if is_cdn else "direct"
         result.extra["config_ip"] = config_ip or ""
+        if cache_key:
+            self._cache.set(cache_key, result.to_dict())
         return result
 
 
@@ -661,10 +700,13 @@ class SNIScanner:
 class BatchSNIScanner:
     def __init__(self, parsed_config, timeout=DEFAULT_TIMEOUT,
                  max_workers=DEFAULT_MAX_WORKERS, retry=DEFAULT_RETRY_COUNT,
-                 verify_cert=False, use_iran_dns=False):
+                 verify_cert=False, use_iran_dns=False, use_cache=True,
+                 cache_ttl=900, stability_runs=1, **kwargs):
         self._scanner = SNIScanner(parsed_config=parsed_config, timeout=timeout,
                                     max_workers=max_workers, retry=retry,
-                                    verify_cert=verify_cert, use_iran_dns=use_iran_dns)
+                                    verify_cert=verify_cert, use_iran_dns=use_iran_dns,
+                                    use_cache=use_cache, cache_ttl=cache_ttl,
+                                    stability_runs=stability_runs)
         self.max_workers = max_workers
 
     def run(self, domains, port=443, on_result=None, stop_on_first=False):
@@ -708,10 +750,13 @@ class EnhancedSNIScanner(SNIScanner):
     def __init__(self, parsed_config, timeout=DEFAULT_TIMEOUT,
                  max_workers=DEFAULT_MAX_WORKERS, retry=DEFAULT_RETRY_COUNT,
                  verify_cert=False, use_iran_dns=False,
-                 check_http=True, verify_proxy_path=True):
+                 check_http=True, verify_proxy_path=True, use_cache=True,
+                 cache_ttl=900, stability_runs=1, **kwargs):
         super().__init__(parsed_config=parsed_config, timeout=timeout,
                          max_workers=max_workers, retry=retry,
-                         verify_cert=verify_cert, use_iran_dns=use_iran_dns)
+                         verify_cert=verify_cert, use_iran_dns=use_iran_dns,
+                         use_cache=use_cache, cache_ttl=cache_ttl,
+                         stability_runs=stability_runs)
         self._http_checker    = HTTPReachChecker(timeout=max(2.0, timeout-1))
         self._path_verifier   = ProxyPathVerifier(timeout=max(2.0, timeout-1))
         self.check_http       = check_http

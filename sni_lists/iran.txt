@@ -1,6 +1,7 @@
 # Iran-Optimized SNI List
 # Domains known to work well from Iran
 
+www.speedtest.net
 cdnjs.cloudflare.com
 ajax.cloudflare.com
 www.aparat.com
